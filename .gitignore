@@ -128,14 +128,22 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Streamlit
-.streamlit/
-
-# Data files
+# Data files - these can be large and should not be committed
+data/
 *.csv
 *.xlsx
-*.json
-exports/
+*.xls
+
+# Log files
+*.log
+
+# Chrome driver and browser files
+chromedriver*
+chrome-*
+
+# Temporary files
+temp/
+tmp/
 
 # IDE
 .vscode/
