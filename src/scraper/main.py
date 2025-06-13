@@ -231,7 +231,7 @@ def update_data(force_update=False):
     # Try Selenium first
     logger.info("🎯 ATTEMPTING METHOD 1: Selenium")
     try:
-        if download_boletin_csv():
+        if download_csv_with_selenium():
             logger.info("✅ Selenium download successful!")
             return get_csv_data()
         else:
@@ -277,6 +277,235 @@ def update_data(force_update=False):
             return get_csv_data()
         logger.error("❌ All methods failed - no real data available")
         return None
+
+def download_csv_with_selenium():
+    """Download CSV using Selenium"""
+    logger.info("🌐 Starting Selenium download process...")
+    
+    # Ensure data directory exists
+    os.makedirs("data", exist_ok=True)
+    logger.info("📁 Data directory ensured")
+    
+    # Test directory permissions
+    try:
+        test_file = "data/test_write.txt"
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+        logger.info("✅ Data directory is writable")
+    except Exception as e:
+        logger.error(f"❌ Data directory not writable: {e}")
+        return False
+    
+    driver = setup_chrome_driver()
+    if not driver:
+        logger.error("❌ Could not setup Chrome driver")
+        return False
+    
+    try:
+        url = "https://www.boletinconcursal.cl/boletin/procedimientos"
+        logger.info(f"🌐 Navigating to: {url}")
+        
+        # Set page load timeout
+        driver.set_page_load_timeout(60)  # 60 seconds timeout
+        
+        try:
+            driver.get(url)
+            logger.info("✅ Page loaded successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to load page: {e}")
+            return False
+        
+        # Wait for page to load
+        logger.info("⏳ Waiting for page elements to load...")
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            logger.info("✅ Page body loaded")
+        except Exception as e:
+            logger.error(f"❌ Page body failed to load: {e}")
+            return False
+        
+        # Log page info
+        try:
+            page_title = driver.title
+            page_url = driver.current_url
+            logger.info(f"📄 Page title: {page_title}")
+            logger.info(f"📄 Current URL: {page_url}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not get page info: {e}")
+        
+        # Look for the CSV download button
+        logger.info("🔍 Looking for CSV download button...")
+        csv_button = None
+        
+        try:
+            # Try to find the button by ID first
+            csv_button = WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located((By.ID, "btnRegistroCsv"))
+            )
+            logger.info("✅ CSV button found by ID")
+            
+            # Check if button is visible and enabled
+            if csv_button.is_displayed():
+                logger.info("✅ CSV button is visible")
+            else:
+                logger.warning("⚠️ CSV button is not visible")
+            
+            if csv_button.is_enabled():
+                logger.info("✅ CSV button is enabled")
+            else:
+                logger.warning("⚠️ CSV button is not enabled")
+                
+        except Exception as e:
+            logger.error(f"❌ CSV button not found by ID: {e}")
+            
+            # Try to find any button with CSV-related text
+            logger.info("🔍 Searching for alternative CSV buttons...")
+            try:
+                buttons = driver.find_elements(By.TAG_NAME, "button")
+                logger.info(f"Found {len(buttons)} buttons on page")
+                
+                for i, button in enumerate(buttons):
+                    try:
+                        text = button.text.lower()
+                        logger.info(f"Button {i}: '{text}' (visible: {button.is_displayed()}, enabled: {button.is_enabled()})")
+                        if 'csv' in text or 'descargar' in text or 'exportar' in text:
+                            logger.info(f"✅ Found potential CSV button: '{text}'")
+                            csv_button = button
+                            break
+                    except Exception as btn_e:
+                        logger.warning(f"⚠️ Error checking button {i}: {btn_e}")
+                        continue
+                        
+            except Exception as e:
+                logger.error(f"❌ Error searching for buttons: {e}")
+        
+        if not csv_button:
+            logger.error("❌ No CSV download button found")
+            return False
+        
+        # Wait for button to be clickable
+        logger.info("⏳ Waiting for CSV button to be clickable...")
+        try:
+            clickable_button = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable(csv_button)
+            )
+            logger.info("✅ CSV button is clickable")
+        except Exception as e:
+            logger.error(f"❌ CSV button not clickable: {e}")
+            # Try to click anyway
+            clickable_button = csv_button
+        
+        # Get initial file list
+        initial_files = set()
+        if os.path.exists("data"):
+            initial_files = set(os.listdir("data"))
+            logger.info(f"📁 Initial files in data directory: {initial_files}")
+        
+        # Click the button
+        logger.info("🖱️ Clicking CSV download button...")
+        try:
+            # Try regular click first
+            clickable_button.click()
+            logger.info("✅ Button clicked successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ Regular click failed: {e}")
+            try:
+                # Try JavaScript click
+                driver.execute_script("arguments[0].click();", clickable_button)
+                logger.info("✅ Button clicked via JavaScript")
+            except Exception as js_e:
+                logger.error(f"❌ JavaScript click also failed: {js_e}")
+                return False
+        
+        # Wait for download to complete
+        logger.info("⏳ Waiting for download to complete...")
+        download_wait_time = 60  # Increased timeout for large file
+        download_detected = False
+        
+        for i in range(download_wait_time):
+            time.sleep(1)
+            
+            # Check for new files
+            current_files = set()
+            if os.path.exists("data"):
+                current_files = set(os.listdir("data"))
+            
+            new_files = current_files - initial_files
+            if new_files:
+                logger.info(f"📁 New files detected: {new_files}")
+                download_detected = True
+            
+            # Check specifically for our CSV file
+            csv_path = "data/boletin_concursal.csv"
+            if os.path.exists(csv_path):
+                size = os.path.getsize(csv_path)
+                logger.info(f"📊 CSV file found! Size: {size} bytes")
+                
+                # Wait for file to finish downloading (size should stabilize)
+                if size > 1000:  # At least 1KB
+                    time.sleep(2)  # Wait a bit more
+                    new_size = os.path.getsize(csv_path)
+                    if new_size == size and size > 10000:  # Size stable and substantial
+                        logger.info(f"✅ Download complete! Final size: {size} bytes")
+                        return True
+                    elif new_size > size:
+                        logger.info(f"📈 Download still in progress... Size: {new_size} bytes")
+                        continue
+            
+            # Log progress every 10 seconds
+            if i % 10 == 0 and i > 0:
+                logger.info(f"⏳ Still waiting for download... ({i}/{download_wait_time}s)")
+                
+                # Check browser downloads (if accessible)
+                try:
+                    # Try to get download status from browser
+                    downloads = driver.execute_script("return navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.getUserMedia;")
+                    if downloads:
+                        logger.info("📥 Browser download API detected")
+                except:
+                    pass
+        
+        # Final check
+        if os.path.exists("data/boletin_concursal.csv"):
+            size = os.path.getsize("data/boletin_concursal.csv")
+            logger.info(f"📊 Final check - CSV file size: {size} bytes")
+            if size > 10000:  # At least 10KB
+                logger.info("✅ CSV file downloaded successfully!")
+                return True
+            else:
+                logger.error(f"❌ CSV file too small ({size} bytes) - likely incomplete")
+                return False
+        else:
+            logger.error("❌ CSV file was not downloaded")
+            
+            # List all files in data directory for debugging
+            if os.path.exists("data"):
+                all_files = os.listdir("data")
+                logger.info(f"📁 All files in data directory: {all_files}")
+            
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Error during Selenium download: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        
+        # Try to get more error details
+        try:
+            logger.error(f"Current URL: {driver.current_url}")
+            logger.error(f"Page source length: {len(driver.page_source)}")
+        except:
+            pass
+            
+        return False
+    finally:
+        try:
+            driver.quit()
+            logger.info("✅ Chrome driver closed")
+        except Exception as e:
+            logger.warning(f"⚠️ Error closing Chrome driver: {e}")
 
 if __name__ == "__main__":
     # Test the scraper
