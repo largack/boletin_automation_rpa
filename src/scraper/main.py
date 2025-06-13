@@ -9,55 +9,70 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
 import pandas as pd
+import logging
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('data_download.log', mode='a')  # File output
+    ]
+)
+logger = logging.getLogger(__name__)
 
 def setup_chrome_driver():
-    """Setup Chrome driver with appropriate options for web scraping"""
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-extensions")
-    chrome_options.add_argument("--disable-plugins")
-    chrome_options.add_argument("--disable-images")
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--disable-features=VizDisplayCompositor")
-    
-    # Set download directory
-    download_dir = os.path.abspath("data")
-    print(f"Setting download directory to: {download_dir}")
-    
-    # Ensure directory exists and is writable
-    os.makedirs(download_dir, exist_ok=True)
-    
-    # Test if directory is writable
-    test_file = os.path.join(download_dir, "test_write.txt")
-    try:
-        with open(test_file, 'w') as f:
-            f.write("test")
-        os.remove(test_file)
-        print(f"✅ Directory {download_dir} is writable")
-    except Exception as e:
-        print(f"❌ Directory {download_dir} is not writable: {e}")
-    
-    prefs = {
-        "download.default_directory": download_dir,
-        "download.prompt_for_download": False,
-        "download.directory_upgrade": True,
-        "safebrowsing.enabled": True
-    }
-    chrome_options.add_experimental_option("prefs", prefs)
+    """Setup Chrome driver with options suitable for cloud deployment"""
+    logger.info("🚀 Setting up Chrome driver...")
     
     try:
-        # Use webdriver-manager to handle driver installation
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        print("✅ Chrome driver initialized successfully")
+        chrome_options = Options()
+        
+        # Essential options for cloud deployment
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-web-security")
+        chrome_options.add_argument("--disable-features=VizDisplayCompositor")
+        chrome_options.add_argument("--remote-debugging-port=9222")
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        # Additional stability options
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-plugins")
+        chrome_options.add_argument("--disable-images")
+        chrome_options.add_argument("--disable-javascript")
+        chrome_options.add_argument("--no-first-run")
+        chrome_options.add_argument("--no-default-browser-check")
+        chrome_options.add_argument("--disable-default-apps")
+        
+        # Set download preferences
+        prefs = {
+            "download.default_directory": os.path.abspath("data"),
+            "download.prompt_for_download": False,
+            "download.directory_upgrade": True,
+            "safebrowsing.enabled": True
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
+        
+        logger.info("✅ Chrome options configured")
+        
+        # Try to create driver
+        driver = webdriver.Chrome(options=chrome_options)
+        logger.info("✅ Chrome driver created successfully")
+        
+        # Test basic functionality
+        driver.get("about:blank")
+        logger.info("✅ Chrome driver basic test passed")
+        
         return driver
+        
     except Exception as e:
-        print(f"❌ Failed to initialize Chrome driver: {e}")
-        raise
+        logger.error(f"❌ Failed to setup Chrome driver: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        return None
 
 def download_boletin_csv():
     """
@@ -156,18 +171,27 @@ def get_csv_data():
         return None
 
 def has_existing_data():
-    """
-    Check if CSV file already exists
-    Returns: bool - True if file exists and is readable
-    """
+    """Check if CSV file already exists"""
     csv_path = "data/boletin_concursal.csv"
+    exists = os.path.exists(csv_path)
+    logger.info(f"📁 Checking for existing data at {csv_path}: {'Found' if exists else 'Not found'}")
     
-    if os.path.exists(csv_path):
+    if exists:
         try:
-            df = pd.read_csv(csv_path)
-            return len(df) > 0
-        except:
+            size = os.path.getsize(csv_path)
+            logger.info(f"📊 Existing file size: {size} bytes")
+            
+            # Check if file has content
+            if size > 100:  # At least 100 bytes
+                logger.info("✅ Existing file appears to have content")
+                return True
+            else:
+                logger.warning("⚠️ Existing file is too small, might be empty")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error checking existing file: {e}")
             return False
+    
     return False
 
 def update_data(force_update=False):
@@ -177,65 +201,81 @@ def update_data(force_update=False):
         force_update (bool): If True, forces download even if data exists
     Returns: pandas.DataFrame or None
     """
-    print("🚀 Starting data update process...")
-    print(f"📁 Current working directory: {os.getcwd()}")
-    print(f"📂 Data directory exists: {os.path.exists('data')}")
+    logger.info("=" * 60)
+    logger.info("🚀 STARTING DATA UPDATE PROCESS")
+    logger.info("=" * 60)
+    
+    # Log environment info
+    logger.info(f"🖥️ Current working directory: {os.getcwd()}")
+    logger.info(f"🐍 Python executable: {os.sys.executable}")
+    logger.info(f"📁 Data directory exists: {os.path.exists('data')}")
+    
+    # List current directory contents
+    try:
+        contents = os.listdir('.')
+        logger.info(f"📂 Current directory contents: {contents}")
+        
+        if os.path.exists('data'):
+            data_contents = os.listdir('data')
+            logger.info(f"📂 Data directory contents: {data_contents}")
+    except Exception as e:
+        logger.error(f"❌ Error listing directory contents: {e}")
     
     # Check if we already have data and don't need to force update
     if not force_update and has_existing_data():
-        print("✅ Using existing CSV data (use force_update=True to download fresh data)")
+        logger.info("✅ Using existing CSV data (use force_update=True to download fresh data)")
         return get_csv_data()
     
-    print("🔄 Attempting to download fresh data...")
+    logger.info("🔄 Attempting to download fresh data...")
     
-    # Try the main Selenium method first
+    # Try Selenium first
+    logger.info("🎯 ATTEMPTING METHOD 1: Selenium")
     try:
-        print("🌐 Trying Selenium method...")
         if download_boletin_csv():
-            print("✅ Selenium download successful!")
+            logger.info("✅ Selenium download successful!")
             return get_csv_data()
         else:
-            print("❌ Selenium method failed")
+            logger.warning("❌ Selenium download failed")
     except Exception as e:
-        print(f"❌ Selenium method failed with error: {str(e)}")
+        logger.error(f"❌ Selenium method crashed: {str(e)}")
     
-    print("🔄 Selenium method failed, trying fallback method...")
+    logger.info("🔄 Selenium method failed, trying fallback method...")
     
     # Try the fallback method
     try:
         from .fallback import download_csv_direct
         
-        print("🌐 Trying direct download method...")
+        logger.info("🎯 ATTEMPTING METHOD 2: Direct Download")
         if download_csv_direct():
-            print("✅ Direct download successful!")
+            logger.info("✅ Direct download successful!")
             return get_csv_data()
         else:
-            print("❌ Direct download method failed...")
+            logger.warning("❌ Direct download method failed...")
             
         # If we have existing data, use it
         if has_existing_data():
-            print("✅ Using existing CSV data as fallback")
+            logger.info("✅ Using existing CSV data as fallback")
             return get_csv_data()
         else:
-            print("❌ No existing data found and all download methods failed")
-            print("💡 Try running the app locally first to download data, then deploy")
+            logger.error("❌ No existing data found and all download methods failed")
+            logger.info("💡 Try running the app locally first to download data, then deploy")
             return None
                 
     except ImportError as e:
-        print(f"❌ Fallback module not available: {e}")
+        logger.error(f"❌ Fallback module not available: {e}")
         # Try to use existing data
         if has_existing_data():
-            print("✅ Using existing CSV data")
+            logger.info("✅ Using existing CSV data")
             return get_csv_data()
-        print("❌ No fallback options available")
+        logger.error("❌ No fallback options available")
         return None
     except Exception as e:
-        print(f"❌ Error in fallback: {str(e)}")
+        logger.error(f"❌ Error in fallback: {str(e)}")
         # Try to use existing data
         if has_existing_data():
-            print("✅ Using existing CSV data as last resort")
+            logger.info("✅ Using existing CSV data as last resort")
             return get_csv_data()
-        print("❌ All methods failed - no real data available")
+        logger.error("❌ All methods failed - no real data available")
         return None
 
 if __name__ == "__main__":

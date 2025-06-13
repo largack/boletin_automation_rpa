@@ -2,6 +2,19 @@ import streamlit as st
 import pandas as pd
 import os
 import sys
+from datetime import datetime, timedelta
+import logging
+
+# Set up logging for Streamlit
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler('streamlit_app.log', mode='a')  # File output
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # Add src directory to path so we can import our modules
 sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
@@ -63,10 +76,10 @@ def main():
     elif page == "📋 Summary":
         summary_page()
 
-
-
 def update_data_section(force_update=False, context="home"):
     """Handle data update process"""
+    logger.info(f"🔄 Streamlit: update_data_section called with force_update={force_update}, context={context}")
+    
     st.subheader("📥 Updating Data...")
     
     # Create a progress bar and status
@@ -74,12 +87,19 @@ def update_data_section(force_update=False, context="home"):
     status_text = st.empty()
     
     try:
+        # Set force update in session state
+        if force_update:
+            st.session_state.force_update = True
+            logger.info("🔧 Streamlit: Set force_update flag in session state")
+        
         if not force_update and has_existing_data():
             status_text.text("📁 Using existing data...")
             progress_bar.progress(50)
+            logger.info("📁 Streamlit: Using existing data")
         else:
             status_text.text("🌐 Connecting to Boletín Concursal website...")
             progress_bar.progress(25)
+            logger.info("🌐 Streamlit: Starting fresh data download")
             
             status_text.text("🔍 Looking for CSV download button...")
             progress_bar.progress(50)
@@ -87,13 +107,16 @@ def update_data_section(force_update=False, context="home"):
             status_text.text("⬇️ Downloading CSV file...")
             progress_bar.progress(75)
         
-        # Call the update_data function from our scraper
-        df = update_data(force_update=force_update)
+        # Call the load_data function which has comprehensive logging
+        logger.info("📊 Streamlit: Calling load_data()...")
+        df = load_data()
         
         progress_bar.progress(100)
         
         if df is not None:
             status_text.text("✅ Data loaded successfully!")
+            logger.info(f"✅ Streamlit: Data loaded successfully - {len(df)} records")
+            
             if force_update:
                 st.success(f"Successfully downloaded fresh data with {len(df)} records!")
             else:
@@ -101,18 +124,20 @@ def update_data_section(force_update=False, context="home"):
             
             # Store data in session state for display
             st.session_state.data = df
+            st.session_state.data_loaded = True
             st.session_state.last_updated = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            logger.info("✅ Streamlit: Data stored in session state")
             
         else:
             status_text.text("❌ Failed to load data")
+            logger.error("❌ Streamlit: load_data() returned None")
             st.error("Failed to download or process the CSV file. Please try again.")
             
     except Exception as e:
         progress_bar.progress(100)
         status_text.text("❌ Error occurred during update")
+        logger.error(f"❌ Streamlit: Error in update_data_section: {str(e)}")
         st.error(f"An error occurred: {str(e)}")
-
-
 
 def reports_page():
     """Reports page with specific filtered reports"""
@@ -771,6 +796,60 @@ def summary_page():
         st.warning("⚠️ No data available. Please go to the Summary page and update data first.")
         if st.button("📋 Go to Summary Page"):
             st.rerun()
+
+def has_existing_data():
+    """Check if CSV file already exists"""
+    try:
+        from src.scraper.main import has_existing_data as check_existing
+        return check_existing()
+    except:
+        return False
+
+def get_csv_data():
+    """Get CSV data if it exists"""
+    try:
+        from src.scraper.main import get_csv_data as get_data
+        return get_data()
+    except:
+        return None
+
+def load_data():
+    """Load data with comprehensive logging"""
+    logger.info("🔄 Streamlit: Starting data load process...")
+    
+    try:
+        from src.scraper.main import update_data
+        logger.info("✅ Streamlit: Successfully imported update_data function")
+        
+        # Check if we should force update
+        force_update = st.session_state.get('force_update', False)
+        logger.info(f"🔧 Streamlit: Force update = {force_update}")
+        
+        # Load the data
+        logger.info("📊 Streamlit: Calling update_data()...")
+        df = update_data(force_update=force_update)
+        
+        if df is not None:
+            logger.info(f"✅ Streamlit: Data loaded successfully - Shape: {df.shape}")
+            logger.info(f"📋 Streamlit: Columns: {list(df.columns)}")
+            
+            # Reset force update flag
+            if 'force_update' in st.session_state:
+                st.session_state.force_update = False
+                logger.info("🔧 Streamlit: Reset force_update flag")
+            
+            return df
+        else:
+            logger.error("❌ Streamlit: update_data() returned None")
+            return None
+            
+    except ImportError as e:
+        logger.error(f"❌ Streamlit: Import error: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"❌ Streamlit: Error loading data: {str(e)}")
+        logger.error(f"Error type: {type(e).__name__}")
+        return None
 
 if __name__ == "__main__":
     main() 
