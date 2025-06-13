@@ -135,7 +135,6 @@ dmypy.json
 *.csv
 *.xlsx
 *.json
-data/
 exports/
 
 # IDE
