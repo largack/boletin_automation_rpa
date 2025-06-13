@@ -438,11 +438,21 @@ def download_csv_with_selenium():
                 logger.info(f"📁 New files detected: {new_files}")
                 download_detected = True
             
-            # Check specifically for our CSV file
+            # Check specifically for our CSV file or any CSV file
             csv_path = "data/boletin_concursal.csv"
+            actual_csv_files = []
+            
+            # Look for any CSV files in the data directory
+            if os.path.exists("data"):
+                for file in os.listdir("data"):
+                    if file.endswith('.csv') and not file.startswith('.'):
+                        actual_csv_files.append(file)
+                        logger.info(f"📄 Found CSV file: {file}")
+            
+            # Check if our expected file exists
             if os.path.exists(csv_path):
                 size = os.path.getsize(csv_path)
-                logger.info(f"📊 CSV file found! Size: {size} bytes")
+                logger.info(f"📊 Expected CSV file found! Size: {size} bytes")
                 
                 # Wait for file to finish downloading (size should stabilize)
                 if size > 1000:  # At least 1KB
@@ -454,6 +464,39 @@ def download_csv_with_selenium():
                     elif new_size > size:
                         logger.info(f"📈 Download still in progress... Size: {new_size} bytes")
                         continue
+            
+            # Check if any other CSV file was downloaded
+            elif actual_csv_files:
+                for csv_file in actual_csv_files:
+                    full_path = f"data/{csv_file}"
+                    size = os.path.getsize(full_path)
+                    logger.info(f"📊 Found alternative CSV file: {csv_file}, Size: {size} bytes")
+                    
+                    if size > 10000:  # Substantial size
+                        # Wait for file to stabilize
+                        time.sleep(2)
+                        new_size = os.path.getsize(full_path)
+                        
+                        if new_size == size:  # Size is stable
+                            logger.info(f"✅ Renaming {csv_file} to boletin_concursal.csv")
+                            try:
+                                # Rename the file to our expected name
+                                os.rename(full_path, csv_path)
+                                logger.info(f"✅ Download complete! Final size: {size} bytes")
+                                return True
+                            except Exception as e:
+                                logger.error(f"❌ Error renaming file: {e}")
+                                # Try copying instead
+                                try:
+                                    import shutil
+                                    shutil.copy2(full_path, csv_path)
+                                    logger.info(f"✅ File copied successfully! Size: {size} bytes")
+                                    return True
+                                except Exception as copy_e:
+                                    logger.error(f"❌ Error copying file: {copy_e}")
+                        else:
+                            logger.info(f"📈 File still growing... Size: {new_size} bytes")
+                            continue
             
             # Log progress every 10 seconds
             if i % 10 == 0 and i > 0:
@@ -468,9 +511,11 @@ def download_csv_with_selenium():
                 except:
                     pass
         
-        # Final check
-        if os.path.exists("data/boletin_concursal.csv"):
-            size = os.path.getsize("data/boletin_concursal.csv")
+        # Final check - look for any CSV files and rename if needed
+        csv_path = "data/boletin_concursal.csv"
+        
+        if os.path.exists(csv_path):
+            size = os.path.getsize(csv_path)
             logger.info(f"📊 Final check - CSV file size: {size} bytes")
             if size > 10000:  # At least 10KB
                 logger.info("✅ CSV file downloaded successfully!")
@@ -479,13 +524,50 @@ def download_csv_with_selenium():
                 logger.error(f"❌ CSV file too small ({size} bytes) - likely incomplete")
                 return False
         else:
-            logger.error("❌ CSV file was not downloaded")
-            
-            # List all files in data directory for debugging
+            # Check for any CSV files that might have been downloaded with different names
             if os.path.exists("data"):
                 all_files = os.listdir("data")
                 logger.info(f"📁 All files in data directory: {all_files}")
+                
+                csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('.')]
+                if csv_files:
+                    logger.info(f"📄 Found CSV files: {csv_files}")
+                    
+                    # Try to use the largest CSV file
+                    largest_csv = None
+                    largest_size = 0
+                    
+                    for csv_file in csv_files:
+                        full_path = f"data/{csv_file}"
+                        size = os.path.getsize(full_path)
+                        logger.info(f"📊 {csv_file}: {size} bytes")
+                        
+                        if size > largest_size and size > 10000:
+                            largest_csv = csv_file
+                            largest_size = size
+                    
+                    if largest_csv:
+                        logger.info(f"✅ Using largest CSV file: {largest_csv} ({largest_size} bytes)")
+                        try:
+                            # Rename to expected name
+                            os.rename(f"data/{largest_csv}", csv_path)
+                            logger.info("✅ CSV file renamed successfully!")
+                            return True
+                        except Exception as e:
+                            logger.error(f"❌ Error renaming file: {e}")
+                            # Try copying instead
+                            try:
+                                import shutil
+                                shutil.copy2(f"data/{largest_csv}", csv_path)
+                                logger.info("✅ CSV file copied successfully!")
+                                return True
+                            except Exception as copy_e:
+                                logger.error(f"❌ Error copying file: {copy_e}")
+                                return False
+                else:
+                    logger.error("❌ No CSV files found in data directory")
             
+            logger.error("❌ CSV file was not downloaded")
             return False
             
     except Exception as e:
