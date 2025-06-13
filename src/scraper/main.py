@@ -21,9 +21,26 @@ def setup_chrome_driver():
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-plugins")
     chrome_options.add_argument("--disable-images")
+    chrome_options.add_argument("--disable-web-security")
+    chrome_options.add_argument("--disable-features=VizDisplayCompositor")
     
     # Set download directory
     download_dir = os.path.abspath("data")
+    print(f"Setting download directory to: {download_dir}")
+    
+    # Ensure directory exists and is writable
+    os.makedirs(download_dir, exist_ok=True)
+    
+    # Test if directory is writable
+    test_file = os.path.join(download_dir, "test_write.txt")
+    try:
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+        print(f"✅ Directory {download_dir} is writable")
+    except Exception as e:
+        print(f"❌ Directory {download_dir} is not writable: {e}")
+    
     prefs = {
         "download.default_directory": download_dir,
         "download.prompt_for_download": False,
@@ -32,9 +49,15 @@ def setup_chrome_driver():
     }
     chrome_options.add_experimental_option("prefs", prefs)
     
-    # Use webdriver-manager to handle driver installation
-    service = Service(ChromeDriverManager().install())
-    return webdriver.Chrome(service=service, options=chrome_options)
+    try:
+        # Use webdriver-manager to handle driver installation
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        print("✅ Chrome driver initialized successfully")
+        return driver
+    except Exception as e:
+        print(f"❌ Failed to initialize Chrome driver: {e}")
+        raise
 
 def download_boletin_csv():
     """
@@ -154,53 +177,66 @@ def update_data(force_update=False):
         force_update (bool): If True, forces download even if data exists
     Returns: pandas.DataFrame or None
     """
-    print("Starting data update process...")
+    print("🚀 Starting data update process...")
+    print(f"📁 Current working directory: {os.getcwd()}")
+    print(f"📂 Data directory exists: {os.path.exists('data')}")
     
     # Check if we already have data and don't need to force update
     if not force_update and has_existing_data():
-        print("Using existing CSV data (use force_update=True to download fresh data)")
+        print("✅ Using existing CSV data (use force_update=True to download fresh data)")
         return get_csv_data()
     
-    print("Attempting to download fresh data...")
+    print("🔄 Attempting to download fresh data...")
     
     # Try the main Selenium method first
-    if download_boletin_csv():
-        # Load and return the data
-        return get_csv_data()
-    else:
-        print("Selenium method failed, trying fallback method...")
-        # Try the fallback method
-        try:
-            from .fallback import download_csv_direct, get_sample_data
+    try:
+        print("🌐 Trying Selenium method...")
+        if download_boletin_csv():
+            print("✅ Selenium download successful!")
+            return get_csv_data()
+        else:
+            print("❌ Selenium method failed")
+    except Exception as e:
+        print(f"❌ Selenium method failed with error: {str(e)}")
+    
+    print("🔄 Selenium method failed, trying fallback method...")
+    
+    # Try the fallback method
+    try:
+        from .fallback import download_csv_direct
+        
+        print("🌐 Trying direct download method...")
+        if download_csv_direct():
+            print("✅ Direct download successful!")
+            return get_csv_data()
+        else:
+            print("❌ Direct download method failed...")
             
-            if download_csv_direct():
-                return get_csv_data()
-            else:
-                print("Fallback method also failed...")
-                # If we have existing data, use it
-                if has_existing_data():
-                    print("Using existing CSV data as fallback")
-                    return get_csv_data()
-                else:
-                    print("No existing data found, creating sample data for demo...")
-                    if get_sample_data():
-                        return get_csv_data()
-                    else:
-                        return None
-        except ImportError:
-            print("Fallback module not available")
-            # Try to use existing data
-            if has_existing_data():
-                print("Using existing CSV data")
-                return get_csv_data()
+        # If we have existing data, use it
+        if has_existing_data():
+            print("✅ Using existing CSV data as fallback")
+            return get_csv_data()
+        else:
+            print("❌ No existing data found and all download methods failed")
+            print("💡 Try running the app locally first to download data, then deploy")
             return None
-        except Exception as e:
-            print(f"Error in fallback: {str(e)}")
-            # Try to use existing data
-            if has_existing_data():
-                print("Using existing CSV data")
-                return get_csv_data()
-            return None
+                
+    except ImportError as e:
+        print(f"❌ Fallback module not available: {e}")
+        # Try to use existing data
+        if has_existing_data():
+            print("✅ Using existing CSV data")
+            return get_csv_data()
+        print("❌ No fallback options available")
+        return None
+    except Exception as e:
+        print(f"❌ Error in fallback: {str(e)}")
+        # Try to use existing data
+        if has_existing_data():
+            print("✅ Using existing CSV data as last resort")
+            return get_csv_data()
+        print("❌ All methods failed - no real data available")
+        return None
 
 if __name__ == "__main__":
     # Test the scraper
