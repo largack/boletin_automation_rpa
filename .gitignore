@@ -128,11 +128,12 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# Data files - these can be large and should not be committed
-data/
-*.csv
-*.xlsx
-*.xls
+# Data files - exclude large CSV files but keep the directory structure
+data/*.csv
+data/*.xlsx
+data/*.xls
+# But allow small files and directory structure
+!data/.gitkeep
 
 # Log files
 *.log

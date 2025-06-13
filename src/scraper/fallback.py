@@ -135,7 +135,19 @@ def download_csv_direct():
                         content = csv_response.text[:1000]  # First 1000 chars
                         logger.info(f"📄 Content preview: {repr(content[:200])}")
                         
-                        if ',' in content and '\n' in content and len(content.strip()) > 50:
+                        # More strict CSV validation
+                        is_valid_csv = (
+                            ',' in content and 
+                            '\n' in content and 
+                            len(content.strip()) > 50 and
+                            not content.strip().startswith('<!') and  # Not HTML
+                            not content.strip().startswith('<html') and  # Not HTML
+                            not '<html' in content.lower() and  # Not HTML anywhere
+                            not '<!doctype' in content.lower() and  # Not HTML doctype
+                            len(csv_response.content) > 10000  # Must be substantial size (>10KB)
+                        )
+                        
+                        if is_valid_csv:
                             logger.info(f"✅ Found valid CSV data at {csv_url}")
                             
                             with open("data/boletin_concursal.csv", 'w', encoding='utf-8') as f:
@@ -149,7 +161,8 @@ def download_csv_direct():
                             else:
                                 logger.error("❌ File was not saved properly")
                         else:
-                            logger.warning(f"⚠️ Response doesn't look like valid CSV data")
+                            logger.warning(f"⚠️ Response doesn't look like valid CSV data - appears to be HTML or too small")
+                            logger.warning(f"   Size: {len(csv_response.content)} bytes, starts with: {repr(content[:50])}")
                     else:
                         logger.warning(f"⚠️ Wrong content type: {content_type}")
                 elif csv_response.status_code == 404:
@@ -172,34 +185,165 @@ def download_csv_direct():
         # Try to make a POST request to simulate the button click
         logger.info("🔄 Trying to simulate button click with POST request...")
         try:
-            post_data_variants = [
-                {'action': 'export_csv', 'format': 'csv'},
-                {'export': 'csv'},
-                {'download': 'csv'},
-                {'btnRegistroCsv': 'true'},
-                {'type': 'csv'},
-            ]
+            # First, let's analyze the form more carefully
+            forms = soup.find_all('form')
+            main_form = None
+            for form in forms:
+                action = form.get('action', '')
+                if '/boletin/procedimientos' in action:
+                    main_form = form
+                    logger.info(f"✅ Found main form with action: {action}")
+                    break
             
-            for i, post_data in enumerate(post_data_variants):
-                logger.info(f"🔄 POST attempt {i+1}: {post_data}")
-                post_response = session.post(url, data=post_data, timeout=30)
-                logger.info(f"📊 POST response status: {post_response.status_code}")
+            if main_form:
+                # Extract all form inputs to build proper POST data
+                form_data = {}
                 
-                if post_response.status_code == 200:
-                    content_type = post_response.headers.get('content-type', '').lower()
-                    logger.info(f"📋 POST content type: {content_type}")
+                # Get all input fields
+                inputs = main_form.find_all(['input', 'select', 'textarea'])
+                for input_field in inputs:
+                    name = input_field.get('name')
+                    if name:
+                        input_type = input_field.get('type', 'text').lower()
+                        value = input_field.get('value', '')
+                        
+                        if input_type == 'hidden':
+                            form_data[name] = value
+                            logger.info(f"🔧 Hidden field: {name} = {value}")
+                        elif input_type == 'submit':
+                            # Don't include submit buttons unless specifically needed
+                            pass
+                        else:
+                            # For other fields, use default values
+                            form_data[name] = value
+                            logger.info(f"🔧 Form field: {name} = {value}")
+                
+                # Try different approaches to trigger CSV download
+                csv_download_attempts = [
+                    # Attempt 1: Add CSV export parameter
+                    {**form_data, 'export': 'csv', 'format': 'csv'},
+                    # Attempt 2: Simulate button click
+                    {**form_data, 'btnRegistroCsv': 'Exportar CSV'},
+                    # Attempt 3: Add download parameter
+                    {**form_data, 'download': 'csv', 'action': 'export'},
+                    # Attempt 4: Try with different export formats
+                    {**form_data, 'exportFormat': 'csv'},
+                    # Attempt 5: Just the form data as-is
+                    form_data,
+                ]
+                
+                for i, post_data in enumerate(csv_download_attempts):
+                    logger.info(f"🔄 CSV download attempt {i+1}: {post_data}")
                     
-                    if 'csv' in content_type or 'application/octet-stream' in content_type:
-                        content = post_response.text[:500]
-                        if ',' in content and '\n' in content:
-                            logger.info("✅ POST request returned CSV data!")
-                            with open("data/boletin_concursal.csv", 'w', encoding='utf-8') as f:
-                                f.write(post_response.text)
+                    try:
+                        # Use the form's action URL
+                        form_action = main_form.get('action', '/boletin/procedimientos')
+                        if not form_action.startswith('http'):
+                            post_url = f"https://www.boletinconcursal.cl{form_action}"
+                        else:
+                            post_url = form_action
+                        
+                        logger.info(f"📤 Posting to: {post_url}")
+                        
+                        # Add proper headers for form submission
+                        headers = {
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                            'Referer': url,
+                            'Origin': 'https://www.boletinconcursal.cl',
+                        }
+                        
+                        post_response = session.post(post_url, data=post_data, headers=headers, timeout=30)
+                        logger.info(f"📊 POST response status: {post_response.status_code}")
+                        logger.info(f"📊 POST response size: {len(post_response.content)} bytes")
+                        
+                        if post_response.status_code == 200:
+                            content_type = post_response.headers.get('content-type', '').lower()
+                            logger.info(f"📋 POST content type: {content_type}")
                             
-                            if os.path.exists("data/boletin_concursal.csv"):
-                                size = os.path.getsize("data/boletin_concursal.csv")
-                                logger.info(f"✅ CSV downloaded via POST! Size: {size} bytes")
-                                return True
+                            # Check if this might be a CSV download
+                            if ('csv' in content_type or 
+                                'application/octet-stream' in content_type or
+                                'text/plain' in content_type):
+                                
+                                content = post_response.text[:500]
+                                
+                                # Apply same strict validation for POST responses
+                                is_valid_csv = (
+                                    ',' in content and 
+                                    '\n' in content and
+                                    not content.strip().startswith('<!') and  # Not HTML
+                                    not content.strip().startswith('<html') and  # Not HTML
+                                    not '<html' in content.lower() and  # Not HTML anywhere
+                                    not '<!doctype' in content.lower() and  # Not HTML doctype
+                                    len(post_response.content) > 10000  # Must be substantial size (>10KB)
+                                )
+                                
+                                if is_valid_csv:
+                                    logger.info("✅ POST request returned valid CSV data!")
+                                    with open("data/boletin_concursal.csv", 'w', encoding='utf-8') as f:
+                                        f.write(post_response.text)
+                                    
+                                    if os.path.exists("data/boletin_concursal.csv"):
+                                        size = os.path.getsize("data/boletin_concursal.csv")
+                                        logger.info(f"✅ CSV downloaded via POST! Size: {size} bytes")
+                                        return True
+                                else:
+                                    logger.warning(f"⚠️ POST response appears to be HTML, not CSV data")
+                                    logger.warning(f"   Size: {len(post_response.content)} bytes, starts with: {repr(content[:50])}")
+                            else:
+                                logger.info(f"📄 Response content type doesn't indicate CSV: {content_type}")
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Error in POST attempt {i+1}: {e}")
+                        continue
+            
+            else:
+                logger.warning("⚠️ Could not find main form for POST simulation")
+                
+                # Fallback to simple POST attempts
+                post_data_variants = [
+                    {'action': 'export_csv', 'format': 'csv'},
+                    {'export': 'csv'},
+                    {'download': 'csv'},
+                    {'btnRegistroCsv': 'true'},
+                    {'type': 'csv'},
+                ]
+                
+                for i, post_data in enumerate(post_data_variants):
+                    logger.info(f"🔄 Simple POST attempt {i+1}: {post_data}")
+                    post_response = session.post(url, data=post_data, timeout=30)
+                    logger.info(f"📊 POST response status: {post_response.status_code}")
+                    
+                    if post_response.status_code == 200:
+                        content_type = post_response.headers.get('content-type', '').lower()
+                        logger.info(f"📋 POST content type: {content_type}")
+                        
+                        if 'csv' in content_type or 'application/octet-stream' in content_type:
+                            content = post_response.text[:500]
+                            
+                            # Apply same strict validation for POST responses
+                            is_valid_csv = (
+                                ',' in content and 
+                                '\n' in content and
+                                not content.strip().startswith('<!') and  # Not HTML
+                                not content.strip().startswith('<html') and  # Not HTML
+                                not '<html' in content.lower() and  # Not HTML anywhere
+                                not '<!doctype' in content.lower() and  # Not HTML doctype
+                                len(post_response.content) > 10000  # Must be substantial size (>10KB)
+                            )
+                            
+                            if is_valid_csv:
+                                logger.info("✅ POST request returned CSV data!")
+                                with open("data/boletin_concursal.csv", 'w', encoding='utf-8') as f:
+                                    f.write(post_response.text)
+                                
+                                if os.path.exists("data/boletin_concursal.csv"):
+                                    size = os.path.getsize("data/boletin_concursal.csv")
+                                    logger.info(f"✅ CSV downloaded via POST! Size: {size} bytes")
+                                    return True
+                            else:
+                                logger.warning(f"⚠️ POST response appears to be HTML, not CSV data")
+                                logger.warning(f"   Size: {len(post_response.content)} bytes, starts with: {repr(content[:50])}")
                      
         except Exception as e:
             logger.error(f"❌ POST request failed: {e}")
