@@ -132,6 +132,7 @@ dmypy.json
 .streamlit/
 
 # Data files
+*.csv
 *.xlsx
 *.json
 exports/
